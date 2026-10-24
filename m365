@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+m365_project_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if ! test -x "$m365_project_dir/.venv/bin/python"; then
+    printf '%s\n' '{"ok":false,"error":{"code":"installation_required","message":"Create .venv and install this package; see README.md."}}'
+    exit 1
+fi
+exec "$m365_project_dir/.venv/bin/python" -m m365_cli.cli "$@"

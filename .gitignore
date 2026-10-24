@@ -1,0 +1,15 @@
+.build/
+.state/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+vendor/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.whl
+.DS_Store

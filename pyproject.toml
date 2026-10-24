@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "m365-cli"
+version = "0.14.0"
+description = "Microsoft 365 mail, calendar, Teams, tasks, files and lists CLI using a persistent browser session"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "babel>=2.18.0",
+    "markdown-it-py>=4,<5",
+    "nh3>=0.3.7,<0.4",
+    "playwright>=1.51,<2",
+    "tzdata>=2026.5",
+]
+
+[project.scripts]
+m365 = "m365_cli.cli:main"
+
+[tool.setuptools.package-data]
+m365_cli = ["*.js"]
+
+[tool.setuptools.packages.find]
+include = ["m365_cli*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[dependency-groups]
+dev = [
+    "build>=1.6.1",
+    "coverage>=7.16.2",
+    "ruff>=0.16.10",
+    "setuptools>=84.0.0",
+]
