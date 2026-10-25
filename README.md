@@ -11,6 +11,27 @@ Outlook and SharePoint disconnect from browser automation after verifying the
 session. Each new command still needs Chrome for authentication; no separate
 credential cache or unattended renewal service is installed.
 
+## Why this exists
+
+I built this tool around a simple principle: **if I can do something manually in
+Microsoft 365, my agents should be able to do it too.** That should be possible
+without an interface-clicking overlay or waiting for corporate IT to approve a
+separate Microsoft Graph application. The CLI uses my existing sign-in and account
+permissions to give agents direct access to the services I work with.
+
+I use it to:
+
+- Triage email and identify what needs my attention.
+- Find appointment slots across calendars.
+- Publish project artefacts to SharePoint.
+- Check updates in Teams chats and channels.
+- Prepare email drafts.
+- Collect project-relevant information from stakeholders across these services.
+
+For email, **I always review the drafts and send them personally**. Agents help
+with the reading, organization and preparation; I make the final call on what
+gets sent.
+
 ## Install with uv
 
 You need **macOS**, **Google Chrome**, and a Microsoft 365 work or school account
