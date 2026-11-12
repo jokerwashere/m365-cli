@@ -19,7 +19,10 @@ class OutlookError(Exception):
                 "Inspect the service and operation journal before another write. Never automatically retry with a new request ID."
             )
         elif self.code in ("login_required", "session_rejected"):
-            result["recovery"] = (
-                "Check the pinned account and complete sign-in in the saved browser. No automatic write retry was made."
+            result.setdefault(
+                "recovery",
+                (
+                    "Check the pinned account and complete sign-in in the saved browser. No automatic write retry was made."
+                ),
             )
         return result

@@ -85,6 +85,50 @@ silent recovery. Microsoft's session lifetime and organizational policies still 
 `M365_BROWSER` can override the Chrome executable path. The macOS default is
 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`.
 
+## Progress, deadlines and outages
+
+Explicit `auth`, `teams`, `tasks`, and `files` **login/status** commands report
+stage changes and a heartbeat every five seconds on stderr. Progress includes
+elapsed time and the total time limit, never account identifiers or credentials.
+Stdout remains exactly one JSON result. `--quiet` suppresses progress, not errors.
+
+```sh
+m365 --account you@example.com auth login --timeout 300
+m365 --account you@example.com auth status --timeout 20
+m365 --account you@example.com teams status --timeout 30 --quiet
+m365 --account you@example.com tasks status --timeout 30
+m365 --account you@example.com files status --site 'https://tenant.sharepoint.com/sites/project' --timeout 30
+```
+
+The total authentication-work deadline defaults to **300 seconds for login** and
+**30 seconds for status**. `--timeout` accepts 1–3600 seconds. For compatibility,
+Outlook/SharePoint `login --timeout 0` skips waiting for interactive sign-in but
+still allows up to 30 seconds for verification. A larger value gives more time
+for MFA or slow loading; it cannot repair an outage.
+
+A parent process enforces this deadline even if DNS, TLS, browser evaluation or
+driver cleanup stalls. It stops only the authentication worker and its driver,
+leaving the dedicated Chrome process, saved profile and operation history intact.
+Worker shutdown may take up to one additional second. This supervisor applies
+only to explicit login/status commands; it does not wrap ordinary reads or writes.
+Authentication network reads also use shorter request/connection timeouts. A known
+read may retry once within its budget. **No worker or service mutation is retried.**
+
+`auth_timeout` includes the last `auth_stage`, elapsed time, configured timeout
+and recovery advice. Network failures retain `transport_error` and their phase;
+a browser fetch timeout is not treated as rejected credentials. A disconnected
+browser/driver returns `browser_unavailable` or `auth_process_failed`. Raw driver
+pipe warnings are filtered, and a cleanup failure does not hide a preceding API
+error. HTTP 5xx responses retain their HTTP status; 502/504 include
+`reason: "service_timeout"`. These authentication errors report
+`mutation_request_sent: false`.
+
+If the web app also stalls or Microsoft returns 5xx, keep the existing profile,
+check connectivity/service health and retry the read-only status check after
+recovery. If Microsoft actually presents a sign-in/MFA prompt, complete it in the
+saved browser and run login again. Authentication success does not authorize
+replaying an earlier, unresolved write.
+
 ## Recovery
 
 - **`login_required` / `session_rejected`:** run `m365 auth login`. If Microsoft

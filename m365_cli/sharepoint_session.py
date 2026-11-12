@@ -6,6 +6,7 @@ import time
 from contextlib import ExitStack
 from urllib.parse import unquote, urlsplit
 
+from .auth_control import browser_failure, progress
 from .errors import OutlookError
 from .http_transport import BrowserCookies, DirectHTTP, service_request
 from .session import endpoint, read_config, save_config, start_browser
@@ -55,6 +56,7 @@ class SharePointSession:
                 raise OutlookError(
                     "account_required", "Pin an account with m365 auth login --account EMAIL."
                 )
+            progress("browser_connect")
             address = start_browser() if self.login else endpoint()
             if not address:
                 raise OutlookError(
@@ -68,9 +70,11 @@ class SharePointSession:
             target = self.site + "/_layouts/15/viewlsts.aspx"
             self.page = next((p for p in context.pages if p.url.split("?")[0] == target), None)
             if self.page is None:
+                progress("browser_load")
                 self.page = context.new_page()
                 self.page.goto(target, wait_until="domcontentloaded", timeout=45000)
             deadline = time.monotonic() + self.wait
+            progress("sign_in")
             while True:
                 identity = self.page.evaluate(
                     "() => {const c=window._spPageContextInfo||{};return {email:c.userEmail,tenant:c.aadTenantId,site:c.siteId,web:c.webId};}"
@@ -94,8 +98,10 @@ class SharePointSession:
                 )
             self.tenant = guid(identity["tenant"])
             self.site_id, self.web_id = guid(identity["site"]), guid(identity["web"])
+            progress("browser_identity")
             self._bootstrap(context)
             self.disconnect_browser()
+            progress("direct_identity")
             self.verify_identity()
             config = read_config()
             sites = config.get("sharepoint_sites", [])
@@ -112,16 +118,17 @@ class SharePointSession:
         except OutlookError:
             self.__exit__()
             raise
-        except Exception:
+        except Exception as error:
             self.__exit__()
-            raise OutlookError(
-                "login_required",
-                "Could not verify the saved SharePoint session; run files login --site SITE.",
-            ) from None
+            raise browser_failure(error) from None
 
     def disconnect_browser(self):
         if getattr(self, "stack", None):
-            self.stack.close()
+            progress("cleanup")
+            try:
+                self.stack.close()
+            except Exception:
+                pass  # Keep the original API error if the driver pipe closed.
         self.page = None
         self.browser_connected = False
 

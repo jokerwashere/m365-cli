@@ -7,6 +7,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from .auth_control import options as auth_options
 from .errors import OutlookError
 from .operations import execute
 from .task_validation import identifier, user_id, validate_payload
@@ -80,8 +81,8 @@ def register(groups, body_options, write_options, page_options):
         "tasks", help="Task account status, capability inventory and aggregate reads"
     ).add_subparsers(dest="command", required=True)
     p = tasks.add_parser("login", help="Reuse the running saved browser; never restart it")
-    p.add_argument("--timeout", type=int, default=300)
-    tasks.add_parser("status")
+    auth_options(p, login=True)
+    auth_options(tasks.add_parser("status"))
     tasks.add_parser(
         "capabilities", help="Implemented task commands and known validation gates (local)"
     )

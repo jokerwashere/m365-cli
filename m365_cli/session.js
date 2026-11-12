@@ -1,4 +1,4 @@
-async ({op, headers: captured, account}) => {
+async ({op, headers: captured, account, timeout_ms = 45000}) => {
     const hosts = ["outlook.office.com", "outlook.office365.com", "outlook.cloud.microsoft", "outlook.live.com"];
     if (location.protocol !== "https:" || !hosts.includes(location.hostname) || (location.port && location.port !== "443")) {
         return {authenticated: false, error: "login_required"};
@@ -64,8 +64,10 @@ async ({op, headers: captured, account}) => {
         Header:{__type:"JsonRequestHeaders:#Exchange",RequestServerVersion:"V2018_01_08",
             TimeZoneContext:{__type:"TimeZoneContext:#Exchange",TimeZoneDefinition:{__type:"TimeZoneDefinitionType:#Exchange",Id:"UTC"}}},
         Body:{__type:"GetOwaUserConfigurationRequest:#Exchange"}};
+    const timeout = Number.isInteger(timeout_ms) && timeout_ms > 0 && timeout_ms <= 45000 ? timeout_ms : 45000;
+    try {
     const response = await fetch(`${base}?action=${action}&app=Mail&n=0`, {method:"POST", headers:requestHeaders,
-        credentials:"include", redirect:"error", signal:AbortSignal.timeout(45000), body:JSON.stringify(body)});
+        credentials:"include", redirect:"error", signal:AbortSignal.timeout(timeout), body:JSON.stringify(body)});
     const reader=response.body.getReader(); let size=0; const chunks=[];
     for (;;) {const {done,value}=await reader.read(); if(done)break;
         size+=value.length; if(size>8*1024*1024){await reader.cancel();throw new Error("Bootstrap response limit");}
@@ -75,4 +77,7 @@ async ({op, headers: captured, account}) => {
     let result; try {result=JSON.parse(new TextDecoder().decode(bytes));}
     catch {result={error:"non_json_response"};}
     return {status:response.status,body:result,retry_after:response.headers.get("retry-after")};
+    } catch (error) {
+        return {transport_error:true,reason:error?.name === "TimeoutError" ? "timeout" : "connection_io"};
+    }
 }

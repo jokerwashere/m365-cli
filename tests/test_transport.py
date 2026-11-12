@@ -341,6 +341,8 @@ vm.createContext(ctx);const run=vm.runInContext('('+source+')',ctx);
  value=await run({op:'bootstrap',headers:{},account:'a@example.com'});assert.equal(value.status,200);assert.equal(calls.length,1);
  assert(calls[0].url.includes('action=GetOwaUserConfiguration'));assert.equal(calls[0].args.redirect,'error');
  assert.equal(calls[0].args.headers['x-anchormailbox'],'SMTP:a@example.com');assert(!JSON.stringify(value).includes(token));
+ ctx.fetch=async()=>{const e=new Error('SENSITIVE');e.name='TimeoutError';throw e};
+ value=await run({op:'bootstrap',headers:{},account:'a@example.com',timeout_ms:1000});assert.equal(value.transport_error,true);assert.equal(value.reason,'timeout');assert(!JSON.stringify(value).includes('SENSITIVE'));
  ctx.location.hostname='evil.test';assert.equal((await run({op:'bootstrap',headers:{}})).authenticated,false);assert.equal(calls.length,1);
  process.stdout.write('passed');
 })().catch(e=>{process.stderr.write(e.stack);process.exit(1)});
@@ -539,6 +541,42 @@ class MaintainerDriveTests(Cases):
 
 
 class ReadRetryTests(Cases):
+    def test_auth_worker_read_can_retry_but_a_write_is_never_replayed(self):
+        from m365_cli.http_transport import service_request
+
+        for read in (True, False):
+            first, second = Mock(), Mock()
+            first.connect.side_effect = TimeoutError("SENSITIVE")
+            response = Mock(status=200, will_close=False)
+            response.getheader.side_effect = lambda key, default=None: default
+            response.isclosed.return_value = True
+            second.getresponse.return_value = response
+            with (
+                patch("m365_cli.auth_control._worker_deadline", time.monotonic() + 30),
+                patch(
+                    "m365_cli.http_transport.http.client.HTTPSConnection",
+                    side_effect=[first, second],
+                ) as factory,
+                patch("m365_cli.http_transport.time.sleep"),
+                patch("m365_cli.http_transport.progress"),
+            ):
+                client = DirectHTTP(ORIGIN)
+                if read:
+                    result = service_request(client, ORIGIN + "/identity", read=True)
+                    self.assertEqual(result.status, 200)
+                    self.assertEqual(factory.call_count, 2)
+                    second.request.assert_called_once()
+                else:
+                    self.error(
+                        "write_outcome_unknown",
+                        lambda client=client: service_request(
+                            client, ORIGIN + "/write", write=True
+                        ),
+                    )
+                    factory.assert_called_once()
+                    second.request.assert_not_called()
+                self.assertEqual(factory.call_args_list[0].kwargs["timeout"], 8)
+
     def test_declared_read_retries_connection_once_without_mutation(self):
         from m365_cli.http_transport import service_request
 

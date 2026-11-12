@@ -1,5 +1,6 @@
 """Teams argument registration, local validation, and dispatch."""
 
+from .auth_control import options as auth_options
 from .errors import OutlookError
 from .operations import execute
 from .session import endpoint
@@ -12,11 +13,11 @@ def register(groups, body_options, write_options, page_options):
     teams = groups.add_parser("teams", help="Teams people, chats, channels, and messaging")
     teams.add_argument("--tenant", help="Expected tenant UUID; defaults to the saved Teams tenant")
     commands = teams.add_subparsers(dest="command", required=True)
-    commands.add_parser("status", help="Verify Teams account and tenant")
+    auth_options(commands.add_parser("status", help="Verify Teams account and tenant"))
     login = commands.add_parser(
         "login", help="Open Teams in the persistent browser and await sign-in"
     )
-    login.add_argument("--timeout", type=int, default=300)
+    auth_options(login, login=True)
     people = commands.add_parser("person").add_subparsers(dest="teams_action", required=True)
     p = people.add_parser("search", help="Find people by name or email (not message search)")
     p.add_argument("query")
@@ -226,7 +227,7 @@ def run(args, plan):
         info = session.authenticate(
             expected=args.account,
             tenant=args.tenant,
-            wait=args.timeout if args.command == "login" else 30,
+            wait=args.timeout if args.command in ("login", "status") else 30,
         )
         if args.command in ("login", "status"):
             return info

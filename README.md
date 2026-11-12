@@ -98,6 +98,22 @@ An empty inbox can return an empty collection. Normal results and errors are
 JSON; help and version output are plain text. The explicit `--account` check is
 recommended for agents and scripts, even though the verified account is saved.
 
+Login/status commands show stage changes and a heartbeat every five seconds on
+stderr, keeping stdout as one JSON result. Their total deadlines default to
+300 seconds for login and 30 seconds for status, including browser and network
+waits. Use `--timeout SECONDS` to change the deadline or `--quiet` to suppress
+progress. These options also apply to `teams`, `tasks`, and `files` login/status.
+
+```sh
+m365 auth status --timeout 20
+m365 auth login --timeout 300
+m365 auth status --quiet
+```
+
+A timeout keeps the saved Chrome profile and returns an actionable JSON error.
+HTTP 5xx errors retain their status; driver pipe warnings do not replace the
+result. See [authentication recovery](docs/AUTH.md#progress-deadlines-and-outages).
+
 ### Enable additional services
 
 Mail, calendar and availability use the Outlook session above. For the other

@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 from urllib.request import ProxyHandler, build_opener
 
+from .auth_control import browser_failure, network_timeout, progress
 from .errors import OutlookError
 from .http_transport import BrowserCookies, DirectHTTP, service_request
 
@@ -194,6 +195,7 @@ class Session:
     def __enter__(self):
         from playwright.sync_api import sync_playwright
 
+        progress("browser_connect")
         address = start_browser() if self.launch else endpoint()
         if not address:
             raise OutlookError("login_required", "Run: m365 auth login --account YOUR_EMAIL")
@@ -226,12 +228,16 @@ class Session:
                     "login.microsoftonline.com",
                     "login.live.com",
                 ):
+                    progress("browser_load")
                     self.page.goto(LOGIN_URL, wait_until="domcontentloaded")
             self.page.set_default_timeout(10000)
             return self
-        except Exception:
-            self.pw.stop()
+        except OutlookError:
+            self.disconnect_browser()
             raise
+        except Exception as error:
+            self.disconnect_browser()
+            raise browser_failure(error) from None
 
     def __exit__(self, *exc):
         self.disconnect_browser()
@@ -246,10 +252,15 @@ class Session:
 
     def disconnect_browser(self):
         """Release automation after authentication; leave the user's Chrome running."""
-        if self.pw:
-            self.pw.stop()
+        pw = self.pw
         self.pw = self.browser = self.page = self.context = None
         self.browser_connected = False
+        if pw:
+            progress("cleanup")
+            try:
+                pw.stop()
+            except Exception:
+                pass  # A broken driver must not replace a verified result or primary error.
 
     def transport_info(self):
         return {
@@ -276,14 +287,17 @@ class Session:
         if not is_outlook_url(self.page.url):
             return {"authenticated": False, "account": None}
         source = Path(__file__).with_name("session.js").read_text()
-        return self.page.evaluate(
-            source,
-            {
-                "op": "status",
-                "headers": self.captured.get("https://" + urlsplit(self.page.url).hostname, {}),
-                "account": expected,
-            },
-        )
+        try:
+            return self.page.evaluate(
+                source,
+                {
+                    "op": "status",
+                    "headers": self.captured.get("https://" + urlsplit(self.page.url).hostname, {}),
+                    "account": expected,
+                },
+            )
+        except Exception as error:
+            raise browser_failure(error) from None
 
     def _bootstrap(self, expected):
         from .api import check_response
@@ -302,17 +316,28 @@ class Session:
             self.origin + self.base + "?action=GetOwaUserConfiguration&app=Mail&n=0"
         )
         self._observed.clear()
-        before = self.context.cookies([self.bootstrap_url])
-        check_response(
-            self.page.evaluate(
+        progress("browser_identity")
+        try:
+            before = self.context.cookies([self.bootstrap_url])
+            response = self.page.evaluate(
                 Path(__file__).with_name("session.js").read_text(),
                 {
                     "op": "bootstrap",
                     "headers": self.captured.get(self.origin, {}),
                     "account": expected,
+                    "timeout_ms": int(network_timeout(45) * 1000),
                 },
             )
-        )
+        except Exception as error:
+            raise browser_failure(error) from None
+        if isinstance(response, dict) and response.get("transport_error") is True:
+            raise OutlookError(
+                "transport_error",
+                "The Outlook browser identity read did not complete.",
+                phase="browser_identity",
+                reason="timeout" if response.get("reason") == "timeout" else "connection_io",
+            )
+        check_response(response)
         if not self._observed or not (
             self._observed.get("authorization") or self._observed.get("x-owa-canary")
         ):
@@ -402,6 +427,7 @@ class Session:
                 if info.get("authenticated"):
                     self._bootstrap(expected)
                     # Verify the actual mailbox on the server, not just cached JWT claims.
+                    progress("direct_identity")
                     data = self.request(
                         "GetOwaUserConfiguration",
                         {"__type": "GetOwaUserConfigurationRequest:#Exchange"},
@@ -429,6 +455,7 @@ class Session:
                     }
                 if wait == 0 and not refreshed and is_outlook_url(self.page.url):
                     # A refresh lets Chrome renew expired tokens through the normal session.
+                    progress("browser_load")
                     self.page.reload(wait_until="domcontentloaded", timeout=30000)
                     self.page.wait_for_timeout(1500)
                     refreshed = True
@@ -444,6 +471,7 @@ class Session:
                     self._observed.clear()
                     if self.cookies:
                         self.cookies.clear()
+                    progress("browser_load")
                     self.page.reload(wait_until="domcontentloaded", timeout=30000)
                     self.page.wait_for_timeout(1500)
                     refreshed = True
@@ -456,17 +484,14 @@ class Session:
                     self.page.wait_for_timeout(1000)
                     continue
                 raise
-            except Exception:
-                if time.monotonic() >= deadline:
-                    raise OutlookError(
-                        "login_required",
-                        "Complete sign-in in the dedicated Chrome window, then run m365 auth login again.",
-                    ) from None
+            except Exception as error:
+                raise browser_failure(error) from None
             if time.monotonic() >= deadline:
                 raise OutlookError(
                     "login_required",
                     "Complete sign-in in the dedicated Chrome window, then run auth login again.",
                 )
+            progress("sign_in")
             self.page.wait_for_timeout(1000)
 
     def request(

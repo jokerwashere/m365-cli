@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+from .auth_control import options as auth_options
 from .errors import OutlookError
 from .operations import execute
 from .references import get as reference_get
@@ -66,8 +67,8 @@ def register(groups, references, write_options):
         "files", help="SharePoint/OneDrive files; browser session, explicit site scope"
     ).add_subparsers(dest="command", required=True)
     p = command(files, "login", "Verify SharePoint sign-in in the saved browser")
-    p.add_argument("--timeout", type=int, default=300)
-    command(files, "status", "Verify account, tenant and site access")
+    auth_options(p, login=True)
+    auth_options(command(files, "status", "Verify account, tenant and site access"))
     command(files, "capabilities", "Local file/list boundaries; no live availability claim")
     command(
         files, "libraries", "List visible document libraries and their root folder IDs", paged=True

@@ -20,6 +20,17 @@ Exit codes: `0` success, `1` operational failure, `2` invalid command syntax,
 `auth status` can succeed with `authenticated: false` when Chrome is closed.
 Never interpret a missing body, missing acknowledgement, or timeout as success.
 
+Explicit login/status commands in `auth`, `teams`, `tasks`, and `files` have total
+worker deadlines (login: 300 seconds; status: 30 seconds). `--timeout SECONDS`
+changes the limit; `--quiet` suppresses stderr progress. Stage messages and
+five-second heartbeats never enter JSON stdout. On `auth_timeout`,
+`transport_error`, `browser_unavailable`, `auth_process_failed`, or HTTP 5xx,
+inspect `auth_stage`, timing, HTTP status and `recovery`. The authentication worker
+sends no service mutations and is never automatically restarted. Deadline expiry
+keeps the saved profile; it is not evidence of expired credentials. Retry a status
+read only after addressing the reported cause. Never extend this permission to
+an unresolved write or replace its request ID. See [AUTH.md](AUTH.md#progress-deadlines-and-outages).
+
 Outlook and SharePoint disconnect from browser automation after authentication,
 then use direct HTTPS for operations. `auth status` / `files status` report
 this in `transport`. Every new command still needs the saved browser session for

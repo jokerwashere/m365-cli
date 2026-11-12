@@ -6,6 +6,7 @@ import time
 from contextlib import ExitStack
 from urllib.parse import unquote, urlsplit
 
+from .auth_control import browser_failure, network_timeout, progress
 from .contracts import changed, object_value
 from .errors import OutlookError
 from .session import endpoint, read_config, save_config
@@ -95,6 +96,7 @@ class TasksSession:
         try:
             if not self.account:
                 raise OutlookError("account_required", "Pin an account with m365 auth login first.")
+            progress("browser_connect")
             address = endpoint()
             if not address:
                 raise OutlookError(
@@ -102,7 +104,7 @@ class TasksSession:
                     "Open the saved browser with m365 auth login, then m365 tasks login.",
                 )
             pw = self.stack.enter_context(sync_playwright())
-            self.browser = pw.chromium.connect_over_cdp(address)
+            self.browser = pw.chromium.connect_over_cdp(address, timeout=10000)
             if not self.browser.contexts:
                 raise OutlookError("login_required", "The saved browser has no active context.")
             self.ctx = self.browser.contexts[0]
@@ -112,6 +114,7 @@ class TasksSession:
             planner = next(
                 (p for p in pages if urlsplit(p.url).hostname == "planner.cloud.microsoft"), None
             )
+            progress("browser_load")
             if planner is None:
                 planner = self.ctx.new_page()
                 planner.goto(
@@ -120,6 +123,7 @@ class TasksSession:
             else:
                 planner.reload(wait_until="domcontentloaded", timeout=45000)
             until = time.monotonic() + self.wait
+            progress("sign_in")
             while not self.required <= self.tokens.keys() and time.monotonic() < until:
                 planner.wait_for_timeout(250)
             if not self.required <= self.tokens.keys():
@@ -139,6 +143,7 @@ class TasksSession:
                     "account_mismatch",
                     "Task service credentials do not match one account and tenant.",
                 )
+            progress("direct_identity")
             me = self.request("graph", "v1.0/me?$select=id,userPrincipalName,mail")
             object_value(me, "tasks.identity", fields=("id",))
             if me["id"] != self.oid or not any(
@@ -163,16 +168,17 @@ class TasksSession:
         except OutlookError:
             self.__exit__(None, None, None)
             raise
-        except Exception:
+        except Exception as error:
             self.__exit__(None, None, None)
-            raise OutlookError(
-                "login_required",
-                "Cannot acquire task credentials from the saved browser. Run m365 tasks login.",
-            ) from None
+            raise browser_failure(error) from None
 
     def __exit__(self, *args):
         self.tokens.clear()
-        self.stack.close()
+        progress("cleanup")
+        try:
+            self.stack.close()
+        except Exception:
+            pass  # A closed driver must not hide the service response.
 
     def capture(self, request):
         if self.frozen:
@@ -231,7 +237,7 @@ class TasksSession:
                 data=json.dumps(body) if body is not None else None,
                 max_redirects=0,
                 max_retries=0,
-                timeout=25000,
+                timeout=int(network_timeout(25) * 1000),
             )
             status = response.status
             try:

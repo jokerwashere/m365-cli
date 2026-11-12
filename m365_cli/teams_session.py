@@ -6,6 +6,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
+from .auth_control import browser_failure, network_timeout, progress
 from .errors import OutlookError
 from .session import endpoint, read_config, save_config, start_browser
 
@@ -117,6 +118,7 @@ class TeamsSession:
     def __enter__(self):
         from playwright.sync_api import sync_playwright
 
+        progress("browser_connect")
         address = start_browser() if self.launch else endpoint()
         if not address:
             raise OutlookError("login_required", "Run m365 teams login to open the saved session.")
@@ -126,21 +128,25 @@ class TeamsSession:
             self.context = self.browser.contexts[0]
             self.context.on("request", self._capture)
             self.page = next((p for p in self.context.pages if trusted_origin(p.url)), None)
+            progress("browser_load")
             if self.page is None:
                 self.page = self.context.new_page()
                 self.page.goto(ORIGIN, wait_until="domcontentloaded", timeout=45000)
             else:
                 self.page.reload(wait_until="domcontentloaded", timeout=45000)
             return self
-        except Exception:
-            self.pw.stop()
-            raise OutlookError(
-                "login_required", "Could not open Teams Web. Run m365 teams login."
-            ) from None
+        except Exception as error:
+            self.__exit__()
+            raise browser_failure(error) from None
 
     def __exit__(self, *exc):
         if self.pw:
-            self.pw.stop()  # Disconnect only; keep the persistent browser open.
+            progress("cleanup")
+            try:
+                self.pw.stop()  # Disconnect only; keep the persistent browser open.
+            except Exception:
+                pass  # Preserve the primary error even if the driver pipe closed.
+            self.pw = None
         self.captured.clear()
         self.headers.clear()
 
@@ -179,6 +185,7 @@ class TeamsSession:
                 "account_required", "Use --account EMAIL or pin an account with m365 auth login."
             )
         deadline = time.monotonic() + wait
+        progress("sign_in")
         while len(self.captured) < 3 and time.monotonic() < deadline:
             self.page.wait_for_timeout(250)
         if len(self.captured) != 3:
@@ -192,6 +199,7 @@ class TeamsSession:
         self.headers = {k: dict(v[1]) for k, v in self.captured.items()}
         self.account, self.tenant, self.oid = account, tid, oid
         self.mri = "8:orgid:" + oid
+        progress("direct_identity")
         data = self.request("mt", "beta/users/tenantsv2")
         if not isinstance(data, list) or not any(
             isinstance(x, dict) and x.get("tenantId") == tid and x.get("userId") == oid
@@ -249,7 +257,7 @@ class TeamsSession:
                 method=method,
                 headers=outgoing,
                 data=(body if raw else json.dumps(body)) if body is not None else None,
-                timeout=25000,
+                timeout=int(network_timeout(25) * 1000),
                 max_redirects=0,
                 max_retries=0,
             )

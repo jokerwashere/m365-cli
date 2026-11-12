@@ -17,6 +17,13 @@ m365 --account you@example.com mail send --to person@example.com --subject 'Hell
 
 ## Shared behavior
 
+- Explicit login/status commands in `auth`, `teams`, `tasks`, and `files` show
+  progress on stderr. Total deadlines default to 300 seconds for login and 30
+  seconds for status; `--timeout` changes the limit and `--quiet` hides progress.
+  A stopped authentication worker leaves Chrome and its saved profile intact.
+  Authentication errors include actionable recovery; no service write is retried.
+  See [authentication deadlines](AUTH.md#progress-deadlines-and-outages).
+
 - Online commands use browser authentication followed by direct HTTP. Outlook and
   SharePoint disconnect after bootstrap; status results report the transport.
   Each invocation still needs browser authentication. No separate credential cache,

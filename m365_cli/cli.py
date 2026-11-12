@@ -11,6 +11,8 @@ from pathlib import Path
 
 from . import __version__
 from .api import API, attendee_list, recipients
+from .auth_control import options as auth_options
+from .auth_control import progress
 from .errors import OutlookError
 from .operations import execute, lookup
 from .session import Session, command_lock, endpoint, read_config, save_config
@@ -88,8 +90,8 @@ def parser():
         "login", help="Open the dedicated Chrome profile and verify the account"
     )
     login.add_argument("--account", default=argparse.SUPPRESS)
-    login.add_argument("--timeout", type=int, default=300)
-    auth.add_parser("status")
+    auth_options(login, login=True)
+    auth_options(auth.add_parser("status", help="Verify the saved account with a bounded check"))
     operation = sub.add_parser(
         "operation", help="Inspect local duplicate-prevention records"
     ).add_subparsers(dest="command", required=True)
@@ -759,7 +761,7 @@ def run(args):
             return {"authenticated": False, "browser_running": False}
         with Session(launch=args.command == "login") as session:
             if args.command == "login":
-                print("Complete sign-in in the dedicated Chrome window.", file=sys.stderr)
+                progress("sign_in")
                 status = session.authenticate(wait=args.timeout, expected=args.account)
                 config = read_config()
                 config["account"] = status["account"]
@@ -799,11 +801,18 @@ def run(args):
         return action()
 
 
-def main():
+def main(*, _auth_worker=False):
+    from . import auth_control
+
     os.umask(0o077)
+    args = None
     try:
         args = parser().parse_args()
-        if args.group == "maintainer" and args.command == "validate":
+        if _auth_worker:
+            auth_control.enable_worker(args)
+        if auth_control.is_auth_command(args) and not _auth_worker:
+            result = auth_control.run(sys.argv[1:], args)
+        elif args.group == "maintainer" and args.command == "validate":
             # The suite owns its lock, or invokes child commands that acquire it.
             result = run(args)
         else:
@@ -814,13 +823,18 @@ def main():
         print(json.dumps({"ok": False, "error": error.as_dict()}, ensure_ascii=False))
         raise SystemExit(2 if error.code == "usage_error" else 1) from None
     except KeyboardInterrupt:
+        message = (
+            "Authentication cancelled. The saved profile was kept; no service mutation was sent."
+            if args is not None and auth_control.is_auth_command(args)
+            else "Interrupted. Inspect any write before retrying."
+        )
         print(
             json.dumps(
                 {
                     "ok": False,
                     "error": {
                         "code": "interrupted",
-                        "message": "Interrupted. Inspect any write before retrying.",
+                        "message": message,
                     },
                 }
             )

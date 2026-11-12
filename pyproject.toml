@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "m365-cli"
-version = "0.14.0"
+version = "0.14.1"
 description = "Microsoft 365 mail, calendar, Teams, tasks, files and lists CLI using a persistent browser session"
 readme = "README.md"
 requires-python = ">=3.11"

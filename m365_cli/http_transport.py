@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from .auth_control import connect_timeout, network_timeout, progress
 from .errors import OutlookError
 
 
@@ -25,7 +26,7 @@ class Response:
 
 def service_request(client, url, *, read=False, **kwargs):
     """Retry a declared read once on connection failure, within one time budget."""
-    deadline = time.monotonic() + 45
+    deadline = time.monotonic() + network_timeout(45)
     for attempt in range(2 if read else 1):
         try:
             return client.request(url, timeout=max(0.1, deadline - time.monotonic()), **kwargs)
@@ -39,6 +40,7 @@ def service_request(client, url, *, read=False, **kwargs):
                     **error.details,
                     read_attempts=attempt + 1,
                 ) from None
+            progress("read_retry")
             time.sleep(0.25)
 
 
@@ -115,7 +117,10 @@ class DirectHTTP:
             connection = self._connection
             if connection is None or connection.sock is None:
                 self.close()
-                connection = http.client.HTTPSConnection(self.host, timeout=timeout)
+                progress("connect")
+                connection = http.client.HTTPSConnection(
+                    self.host, timeout=connect_timeout(timeout)
+                )
                 self._connection = connection
                 connection.connect()
             socket = connection.sock
@@ -133,6 +138,7 @@ class DirectHTTP:
                 raise TimeoutError
             socket.settimeout(remaining)
             phase = "response_headers"
+            progress("response")
             response = connection.getresponse()
             if 300 <= response.status < 400:
                 raise OutlookError(
