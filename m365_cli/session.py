@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 from urllib.request import ProxyHandler, build_opener
 
-from .auth_control import browser_failure, network_timeout, progress
+from .auth_control import browser_failure, connect_browser, network_timeout, progress
 from .errors import OutlookError
 from .http_transport import BrowserCookies, DirectHTTP, service_request
 
@@ -195,13 +195,13 @@ class Session:
     def __enter__(self):
         from playwright.sync_api import sync_playwright
 
-        progress("browser_connect")
+        progress("browser_start")
         address = start_browser() if self.launch else endpoint()
         if not address:
             raise OutlookError("login_required", "Run: m365 auth login --account YOUR_EMAIL")
         self.pw = sync_playwright().start()
         try:
-            self.browser = self.pw.chromium.connect_over_cdp(address, timeout=10000)
+            self.browser = connect_browser(self.pw, address)
             self.context = self.browser.contexts[0]
             self.browser_connected = True
             self.context.on("request", self._capture)

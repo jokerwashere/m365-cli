@@ -20,6 +20,9 @@ m365 --account you@example.com mail send --to person@example.com --subject 'Hell
 - Explicit login/status commands in `auth`, `teams`, `tasks`, and `files` show
   progress on stderr. Total deadlines default to 300 seconds for login and 30
   seconds for status; `--timeout` changes the limit and `--quiet` hides progress.
+  Individual steps can time out sooner: local Chrome connection has a separate
+  10-second limit. Progress/errors distinguish step and overall limits; increasing
+  `--timeout` does not change the Chrome connection limit.
   A stopped authentication worker leaves Chrome and its saved profile intact.
   Authentication errors include actionable recovery; no service write is retried.
   See [authentication deadlines](AUTH.md#progress-deadlines-and-outages).

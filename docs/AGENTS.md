@@ -25,7 +25,14 @@ worker deadlines (login: 300 seconds; status: 30 seconds). `--timeout SECONDS`
 changes the limit; `--quiet` suppresses stderr progress. Stage messages and
 five-second heartbeats never enter JSON stdout. On `auth_timeout`,
 `transport_error`, `browser_unavailable`, `auth_process_failed`, or HTTP 5xx,
-inspect `auth_stage`, timing, HTTP status and `recovery`. The authentication worker
+inspect `auth_stage`, timing, HTTP status and `recovery`. `command_timeout_seconds`
+is the overall ceiling (`timeout_seconds` is its compatibility alias).
+`timeout_scope: "operation"` means a shorter step timed out; the local Chrome
+connection reports `operation_timeout_seconds: 10`. Increasing `--timeout` does
+not extend that step. `timeout_scope: "command"` identifies the overall deadline.
+`elapsed_seconds` is total command time, including startup and cleanup. Follow
+the stage-specific recovery rather than treating every timeout as an outage.
+The authentication worker
 sends no service mutations and is never automatically restarted. Deadline expiry
 keeps the saved profile; it is not evidence of expired credentials. Retry a status
 read only after addressing the reported cause. Never extend this permission to

@@ -6,7 +6,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from .auth_control import browser_failure, network_timeout, progress
+from .auth_control import browser_failure, connect_browser, network_timeout, progress
 from .errors import OutlookError
 from .session import endpoint, read_config, save_config, start_browser
 
@@ -118,13 +118,13 @@ class TeamsSession:
     def __enter__(self):
         from playwright.sync_api import sync_playwright
 
-        progress("browser_connect")
+        progress("browser_start")
         address = start_browser() if self.launch else endpoint()
         if not address:
             raise OutlookError("login_required", "Run m365 teams login to open the saved session.")
         self.pw = sync_playwright().start()
         try:
-            self.browser = self.pw.chromium.connect_over_cdp(address, timeout=10000)
+            self.browser = connect_browser(self.pw, address)
             self.context = self.browser.contexts[0]
             self.context.on("request", self._capture)
             self.page = next((p for p in self.context.pages if trusted_origin(p.url)), None)
@@ -135,6 +135,9 @@ class TeamsSession:
             else:
                 self.page.reload(wait_until="domcontentloaded", timeout=45000)
             return self
+        except OutlookError:
+            self.__exit__()
+            raise
         except Exception as error:
             self.__exit__()
             raise browser_failure(error) from None

@@ -12,7 +12,9 @@ from .errors import OutlookError
 
 STAGES = {
     "starting": "Starting authentication check",
+    "browser_start": "Preparing the saved Chrome profile",
     "browser_connect": "Connecting to the saved Chrome profile",
+    "browser_session": "Inspecting the saved Chrome session",
     "browser_load": "Loading the Microsoft web app",
     "sign_in": "Waiting for Microsoft sign-in; complete any prompts in Chrome",
     "browser_identity": "Checking the browser session with Microsoft",
@@ -23,6 +25,7 @@ STAGES = {
     "cleanup": "Releasing the connection; keeping Chrome open",
 }
 PREFIX = "M365_AUTH_PROGRESS "
+BROWSER_CONNECT_TIMEOUT = 10
 _worker_deadline = None
 
 
@@ -39,7 +42,7 @@ def options(parser, *, login=False):
         "--timeout",
         type=int,
         default=300 if login else 30,
-        help="Total command deadline in seconds, including browser/network waits (default: %(default)s)",
+        help="Overall command deadline in seconds; individual browser/network steps can time out sooner (default: %(default)s)",
     )
     parser.add_argument(
         "--quiet", action="store_true", help="Suppress progress on stderr; keep JSON stdout"
@@ -67,9 +70,37 @@ def enable_worker(args):
     _worker_deadline = time.monotonic() + budget(args)
 
 
-def progress(stage):
+def progress(stage, *, operation_timeout_seconds=None):
     if _worker_deadline is not None and stage in STAGES:
-        print(PREFIX + json.dumps({"stage": stage}), file=sys.stderr, flush=True)
+        event = {"stage": stage}
+        if operation_timeout_seconds is not None:
+            event["operation_timeout_seconds"] = operation_timeout_seconds
+        print(PREFIX + json.dumps(event), file=sys.stderr, flush=True)
+
+
+def connect_browser(playwright, address):
+    """Report the actual CDP limit separately from the command's total budget."""
+    progress("browser_connect", operation_timeout_seconds=BROWSER_CONNECT_TIMEOUT)
+    try:
+        browser = playwright.chromium.connect_over_cdp(
+            address, timeout=BROWSER_CONNECT_TIMEOUT * 1000
+        )
+    except Exception as error:
+        failure = browser_failure(error)
+        failure.args = (
+            "Could not connect to the saved Chrome profile. The browser may be unresponsive or disconnected. The saved profile was kept.",
+        )
+        failure.details["auth_stage"] = "browser_connect"
+        if failure.details["reason"] == "timeout":
+            failure.args = (
+                f"The local connection to Chrome did not complete within its {BROWSER_CONNECT_TIMEOUT}-second connection limit. The saved profile was kept.",
+            )
+            failure.details.update(
+                timeout_scope="operation", operation_timeout_seconds=BROWSER_CONNECT_TIMEOUT
+            )
+        raise failure from None
+    progress("browser_session")
+    return browser
 
 
 def network_timeout(default):
@@ -101,8 +132,14 @@ def annotate(error, args, stage, elapsed):
         )
     error.details.setdefault("auth_stage", stage)
     error.details.setdefault("elapsed_seconds", round(elapsed, 1))
+    error.details.setdefault("command_timeout_seconds", budget(args))
+    # Retain the original field for existing agents; it is the overall budget.
     error.details.setdefault("timeout_seconds", budget(args))
     error.details.setdefault("mutation_request_sent", False)
+    if error.code == "auth_timeout":
+        error.details["timeout_scope"] = "command"
+    elif error.details.get("reason") == "timeout":
+        error.details.setdefault("timeout_scope", "operation")
     status = error.details.get("http_status", error.details.get("status"))
     if isinstance(status, int) and 500 <= status <= 599:
         error.args = (
@@ -123,6 +160,22 @@ def annotate(error, args, stage, elapsed):
         "runtime_error",
     ):
         error.details["recovery"] = recovery(args)
+    if error.code == "browser_unavailable" and error.details["auth_stage"] == "browser_connect":
+        site = " --site SITE" if args.group == "files" else ""
+        login = (
+            "m365 auth login, then m365 tasks login"
+            if args.group == "tasks"
+            else f"m365 {args.group} login{site}"
+        )
+        error.details["recovery"] = (
+            "Check that the dedicated Chrome window is responsive. If it is stuck, close "
+            "only that window, then "
+            f"run {login} to reopen the saved profile. Do not delete "
+            "the profile. This failure occurred while connecting to local Chrome, before "
+            "Microsoft account verification. Increasing --timeout changes the overall "
+            f"command limit, not the {BROWSER_CONNECT_TIMEOUT}-second Chrome connection limit. "
+            "No service mutation was sent."
+        )
     return error
 
 
@@ -155,14 +208,16 @@ def _supervise(command, args, *, interval=5):
     deadline = started + limit
     stage = "starting"
     work_stage = stage
+    operation_limit = None
     output, pending = bytearray(), bytearray()
     process = None
 
     def report():
         if not getattr(args, "quiet", False):
             elapsed = int(time.monotonic() - started)
+            step = f"{operation_limit:g}s step limit; " if operation_limit is not None else ""
             print(
-                f"[m365] {STAGES[stage]} ({elapsed}s elapsed; {limit}s limit).",
+                f"[m365] {STAGES[stage]} ({elapsed}s total elapsed; {step}{limit}s overall limit).",
                 file=sys.stderr,
                 flush=True,
             )
@@ -186,9 +241,14 @@ def _supervise(command, args, *, interval=5):
                 if now >= deadline:
                     raise OutlookError(
                         "auth_timeout",
-                        "Authentication exceeded its command deadline; the saved browser profile was kept.",
+                        f"Authentication reached its {limit}-second overall command limit; the saved browser profile was kept.",
                         phase=stage,
                         reason="deadline_exceeded",
+                        **(
+                            {"operation_timeout_seconds": operation_limit}
+                            if operation_limit is not None
+                            else {}
+                        ),
                     )
                 if now >= heartbeat:
                     report()
@@ -221,16 +281,25 @@ def _supervise(command, args, *, interval=5):
                                     else None
                                 )
                                 next_stage = event.get("stage") if isinstance(event, dict) else None
+                                next_limit = (
+                                    event.get("operation_timeout_seconds")
+                                    if isinstance(event, dict)
+                                    else None
+                                )
                             except (UnicodeError, ValueError):
                                 next_stage = None
+                                next_limit = None
+                            if type(next_limit) not in (int, float) or not 0 < next_limit <= 3600:
+                                next_limit = None
                             # Only constant stage descriptions reach stderr. Never
                             # forward worker warnings, exception text or headers.
                             if (
                                 isinstance(next_stage, str)
                                 and next_stage in STAGES
-                                and next_stage != stage
+                                and (next_stage != stage or next_limit != operation_limit)
                             ):
                                 stage = next_stage
+                                operation_limit = next_limit
                                 if stage != "cleanup":
                                     work_stage = stage
                                 report()

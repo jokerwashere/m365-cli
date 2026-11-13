@@ -106,6 +106,32 @@ Outlook/SharePoint `login --timeout 0` skips waiting for interactive sign-in but
 still allows up to 30 seconds for verification. A larger value gives more time
 for MFA or slow loading; it cannot repair an outage.
 
+The overall limit is a ceiling, not a promise to wait that long. Individual steps
+can time out earlier. In particular, connecting to **local Chrome** has a separate
+**10-second connection limit**, before the Microsoft account check. Increasing
+`--timeout` does not extend this connection limit. Progress names both limits:
+
+```text
+[m365] Connecting to the saved Chrome profile (1s total elapsed; 10s step limit; 300s overall limit).
+```
+
+A Chrome connection timeout reports `timeout_scope: "operation"`,
+`operation_timeout_seconds: 10` and `command_timeout_seconds: 300` for the default
+login budget. `elapsed_seconds` measures the entire command, including startup
+and cleanup, so a value around 11 seconds is compatible with that 10-second step
+limit. `timeout_seconds` remains an alias of `command_timeout_seconds` for existing
+scripts; it does not identify the limit that expired. If the overall deadline
+expires first, the error is `auth_timeout` with `timeout_scope: "command"`.
+Other browser/network timeout errors identify the operation scope but may not
+include an exact operation limit when it is unavailable.
+
+For `browser_unavailable` at `auth_stage: "browser_connect"`, check whether the
+dedicated Chrome window is responsive. If it is stuck, close only that window
+and rerun the relevant login command to reopen the saved profile. Keep the profile
+directory. For tasks, reopen Chrome with `m365 auth login` first, then run
+`m365 tasks login`. This local connection failure is not evidence of a Microsoft outage
+or expired credentials.
+
 A parent process enforces this deadline even if DNS, TLS, browser evaluation or
 driver cleanup stalls. It stops only the authentication worker and its driver,
 leaving the dedicated Chrome process, saved profile and operation history intact.

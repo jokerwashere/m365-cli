@@ -227,7 +227,7 @@ wheels = [
 
 [[package]]
 name = "m365-cli"
-version = "0.14.1"
+version = "0.14.2"
 source = { editable = "." }
 dependencies = [
     { name = "babel" },

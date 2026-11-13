@@ -6,7 +6,7 @@ import time
 from contextlib import ExitStack
 from urllib.parse import unquote, urlsplit
 
-from .auth_control import browser_failure, progress
+from .auth_control import browser_failure, connect_browser, progress
 from .errors import OutlookError
 from .http_transport import BrowserCookies, DirectHTTP, service_request
 from .session import endpoint, read_config, save_config, start_browser
@@ -56,7 +56,7 @@ class SharePointSession:
                 raise OutlookError(
                     "account_required", "Pin an account with m365 auth login --account EMAIL."
                 )
-            progress("browser_connect")
+            progress("browser_start")
             address = start_browser() if self.login else endpoint()
             if not address:
                 raise OutlookError(
@@ -64,7 +64,7 @@ class SharePointSession:
                     "Run m365 files login --site SITE using the saved browser profile.",
                 )
             pw = self.stack.enter_context(sync_playwright())
-            browser = pw.chromium.connect_over_cdp(address, timeout=10000)
+            browser = connect_browser(pw, address)
             context = browser.contexts[0]
             self.browser_connected = True
             target = self.site + "/_layouts/15/viewlsts.aspx"

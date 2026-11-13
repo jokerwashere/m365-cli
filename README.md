@@ -103,6 +103,9 @@ stderr, keeping stdout as one JSON result. Their total deadlines default to
 300 seconds for login and 30 seconds for status, including browser and network
 waits. Use `--timeout SECONDS` to change the deadline or `--quiet` to suppress
 progress. These options also apply to `teams`, `tasks`, and `files` login/status.
+This is an overall ceiling: individual steps can time out sooner. Connecting to
+local Chrome has a separate 10-second limit that `--timeout` does not change.
+Progress and JSON errors distinguish the step limit from the overall limit.
 
 ```sh
 m365 auth status --timeout 20

@@ -6,7 +6,7 @@ import time
 from contextlib import ExitStack
 from urllib.parse import unquote, urlsplit
 
-from .auth_control import browser_failure, network_timeout, progress
+from .auth_control import browser_failure, connect_browser, network_timeout, progress
 from .contracts import changed, object_value
 from .errors import OutlookError
 from .session import endpoint, read_config, save_config
@@ -96,7 +96,7 @@ class TasksSession:
         try:
             if not self.account:
                 raise OutlookError("account_required", "Pin an account with m365 auth login first.")
-            progress("browser_connect")
+            progress("browser_start")
             address = endpoint()
             if not address:
                 raise OutlookError(
@@ -104,7 +104,7 @@ class TasksSession:
                     "Open the saved browser with m365 auth login, then m365 tasks login.",
                 )
             pw = self.stack.enter_context(sync_playwright())
-            self.browser = pw.chromium.connect_over_cdp(address, timeout=10000)
+            self.browser = connect_browser(pw, address)
             if not self.browser.contexts:
                 raise OutlookError("login_required", "The saved browser has no active context.")
             self.ctx = self.browser.contexts[0]

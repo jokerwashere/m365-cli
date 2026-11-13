@@ -1,6 +1,7 @@
 """Synthetic outages, closed drivers and real process deadlines; no Microsoft traffic."""
 
 import contextlib
+import importlib
 import io
 import json
 import os
@@ -144,9 +145,140 @@ class AuthControlTests(unittest.TestCase):
         self.assertEqual(error["code"], "auth_timeout")
         self.assertEqual(error["phase"], "browser_identity")
         self.assertEqual(error["timeout_seconds"], 1)
+        self.assertEqual(error["command_timeout_seconds"], 1)
+        self.assertEqual(error["timeout_scope"], "command")
         self.assertFalse(error["mutation_request_sent"])
         self.assertIn("profile", error["recovery"])
         self.assertGreater(stderr.getvalue().count("elapsed"), 2)
+
+    def test_chrome_connection_timeout_reports_actual_limit_and_local_recovery(self):
+        parsed = parser().parse_args(["auth", "login", "--timeout", "300"])
+        script = """
+import json
+from unittest.mock import Mock
+from m365_cli import auth_control
+from m365_cli.cli import parser
+from m365_cli.errors import OutlookError
+auth_control.enable_worker(parser().parse_args(['auth', 'login']))
+driver = Mock()
+driver.chromium.connect_over_cdp.side_effect = TimeoutError('SENSITIVE')
+try:
+    auth_control.connect_browser(driver, 'ws://127.0.0.1:12345/SENSITIVE')
+except OutlookError as error:
+    driver.chromium.connect_over_cdp.assert_called_once_with(
+        'ws://127.0.0.1:12345/SENSITIVE', timeout=10000)
+    auth_control.progress('cleanup')
+    print(json.dumps({'ok': False, 'error': error.as_dict()}))
+"""
+        stderr = io.StringIO()
+        with (
+            contextlib.redirect_stderr(stderr),
+            patch("m365_cli.auth_control.subprocess.Popen", wraps=subprocess.Popen) as spawn,
+            self.assertRaises(OutlookError) as caught,
+        ):
+            auth_control._supervise([sys.executable, "-c", script], parsed)
+        spawn.assert_called_once()
+        error = caught.exception.as_dict()
+        self.assertEqual(error["code"], "browser_unavailable")
+        self.assertEqual(error["reason"], "timeout")
+        self.assertEqual(error["timeout_scope"], "operation")
+        self.assertEqual(error["operation_timeout_seconds"], 10)
+        self.assertEqual(error["command_timeout_seconds"], 300)
+        self.assertEqual(error["timeout_seconds"], 300)  # Compatibility alias.
+        self.assertEqual(error["auth_stage"], "browser_connect")
+        self.assertIn("10-second connection limit", error["message"])
+        self.assertIn("local Chrome", error["recovery"])
+        self.assertIn("not the 10-second", error["recovery"])
+        self.assertNotIn("service health", error["recovery"])
+        self.assertFalse(error["mutation_request_sent"])
+        self.assertIn("10s step limit; 300s overall limit", stderr.getvalue())
+        cleanup = [line for line in stderr.getvalue().splitlines() if "Releasing" in line]
+        self.assertEqual(len(cleanup), 1)
+        self.assertNotIn("step limit", cleanup[0])
+        self.assertNotIn("SENSITIVE", stderr.getvalue() + json.dumps(error))
+
+    def test_overall_deadline_can_expire_before_chrome_connection_limit(self):
+        script = 'import sys,time; print(\'M365_AUTH_PROGRESS {"stage":"browser_connect","operation_timeout_seconds":10}\',file=sys.stderr,flush=True); time.sleep(60)'
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(OutlookError) as caught:
+            auth_control._supervise([sys.executable, "-u", "-c", script], args())
+        error = caught.exception.as_dict()
+        self.assertEqual(error["code"], "auth_timeout")
+        self.assertEqual(error["timeout_scope"], "command")
+        self.assertEqual(error["command_timeout_seconds"], 1)
+        self.assertEqual(error["operation_timeout_seconds"], 10)
+        self.assertIn("1-second overall command limit", error["message"])
+
+    def test_non_timeout_browser_connection_failure_does_not_claim_timeout(self):
+        driver = Mock()
+        driver.chromium.connect_over_cdp.side_effect = BrokenPipeError("SENSITIVE")
+        with self.assertRaises(OutlookError) as caught:
+            auth_control.connect_browser(driver, "ws://127.0.0.1:12345/SENSITIVE")
+        error = caught.exception.as_dict()
+        self.assertEqual(error["reason"], "browser_connection")
+        self.assertEqual(error["auth_stage"], "browser_connect")
+        self.assertNotIn("operation_timeout_seconds", error)
+        self.assertNotIn("timeout_scope", error)
+        self.assertNotIn("SENSITIVE", json.dumps(error))
+        driver.chromium.connect_over_cdp.assert_called_once()
+
+    def test_all_service_sessions_preserve_chrome_timeout_through_cleanup(self):
+        cases = (
+            ("session", "Session", []),
+            ("teams_session", "TeamsSession", []),
+            ("tasks_session", "TasksSession", []),
+            (
+                "sharepoint_session",
+                "SharePointSession",
+                ["https://example.sharepoint.com/sites/test"],
+            ),
+        )
+        for module_name, class_name, positional in cases:
+            with self.subTest(service=module_name):
+                module = importlib.import_module("m365_cli." + module_name)
+                driver = Mock()
+                driver.chromium.connect_over_cdp.side_effect = TimeoutError("SENSITIVE")
+                driver.stop.side_effect = BrokenPipeError("SENSITIVE")
+                with (
+                    patch.object(
+                        module, "read_config", return_value={"account": "reader@example.com"}
+                    ),
+                    patch.object(module, "endpoint", return_value="ws://127.0.0.1:12345/SENSITIVE"),
+                    patch("playwright.sync_api.sync_playwright") as start,
+                    self.assertRaises(OutlookError) as caught,
+                ):
+                    start.return_value.start.return_value = driver
+                    start.return_value.__enter__.return_value = driver
+                    start.return_value.__exit__.side_effect = BrokenPipeError("SENSITIVE")
+                    getattr(module, class_name)(*positional).__enter__()
+                error = caught.exception.as_dict()
+                self.assertEqual(error["timeout_scope"], "operation")
+                self.assertEqual(error["operation_timeout_seconds"], 10)
+                self.assertEqual(error["auth_stage"], "browser_connect")
+                self.assertNotIn("SENSITIVE", json.dumps(error))
+                driver.chromium.connect_over_cdp.assert_called_once()
+                if module_name == "tasks_session":
+                    parsed = parser().parse_args(["tasks", "login"])
+                    recovered = auth_control.annotate(caught.exception, parsed, "cleanup", 11.2)
+                    self.assertIn(
+                        "m365 auth login, then m365 tasks login", recovered.details["recovery"]
+                    )
+
+    def test_completed_browser_connection_clears_step_progress(self):
+        driver = Mock()
+        stderr = io.StringIO()
+        with (
+            patch("m365_cli.auth_control._worker_deadline", time.monotonic() + 300),
+            contextlib.redirect_stderr(stderr),
+        ):
+            browser = auth_control.connect_browser(driver, "ws://127.0.0.1:12345/SENSITIVE")
+        self.assertIs(browser, driver.chromium.connect_over_cdp.return_value)
+        events = [
+            json.loads(line.removeprefix(auth_control.PREFIX))
+            for line in stderr.getvalue().splitlines()
+        ]
+        self.assertEqual(events[0], {"stage": "browser_connect", "operation_timeout_seconds": 10})
+        self.assertEqual(events[1], {"stage": "browser_session"})
+        self.assertNotIn("SENSITIVE", stderr.getvalue())
 
     def test_timeout_keeps_detached_browser_process_alive(self):
         with tempfile.TemporaryDirectory() as directory:

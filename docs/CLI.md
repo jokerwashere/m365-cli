@@ -13,6 +13,9 @@ m365 --account you@example.com mail send --to person@example.com --subject 'Hell
 - Explicit login/status commands in `auth`, `teams`, `tasks`, and `files` show
   progress on stderr. Total deadlines default to 300 seconds for login and 30
   seconds for status; `--timeout` changes the limit and `--quiet` hides progress.
+  Individual steps can time out sooner: local Chrome connection has a separate
+  10-second limit. Progress/errors distinguish step and overall limits; increasing
+  `--timeout` does not change the Chrome connection limit.
   A stopped authentication worker leaves Chrome and its saved profile intact.
   Authentication errors include actionable recovery; no service write is retried.
   See [authentication deadlines](AUTH.md#progress-deadlines-and-outages).
@@ -182,8 +185,8 @@ usage: m365 auth login [-h] [--account ACCOUNT] [--timeout TIMEOUT] [--quiet]
 options:
   -h, --help         show this help message and exit
   --account ACCOUNT
-  --timeout TIMEOUT  Total command deadline in seconds, including
-                     browser/network waits (default: 300)
+  --timeout TIMEOUT  Overall command deadline in seconds; individual
+                     browser/network steps can time out sooner (default: 300)
   --quiet            Suppress progress on stderr; keep JSON stdout
 ```
 
@@ -194,8 +197,8 @@ usage: m365 auth status [-h] [--timeout TIMEOUT] [--quiet]
 
 options:
   -h, --help         show this help message and exit
-  --timeout TIMEOUT  Total command deadline in seconds, including
-                     browser/network waits (default: 30)
+  --timeout TIMEOUT  Overall command deadline in seconds; individual
+                     browser/network steps can time out sooner (default: 30)
   --quiet            Suppress progress on stderr; keep JSON stdout
 ```
 
@@ -1326,8 +1329,8 @@ usage: m365 teams status [-h] [--timeout TIMEOUT] [--quiet]
 
 options:
   -h, --help         show this help message and exit
-  --timeout TIMEOUT  Total command deadline in seconds, including
-                     browser/network waits (default: 30)
+  --timeout TIMEOUT  Overall command deadline in seconds; individual
+                     browser/network steps can time out sooner (default: 30)
   --quiet            Suppress progress on stderr; keep JSON stdout
 ```
 
@@ -1338,8 +1341,8 @@ usage: m365 teams login [-h] [--timeout TIMEOUT] [--quiet]
 
 options:
   -h, --help         show this help message and exit
-  --timeout TIMEOUT  Total command deadline in seconds, including
-                     browser/network waits (default: 300)
+  --timeout TIMEOUT  Overall command deadline in seconds; individual
+                     browser/network steps can time out sooner (default: 300)
   --quiet            Suppress progress on stderr; keep JSON stdout
 ```
 
@@ -1984,8 +1987,8 @@ usage: m365 tasks login [-h] [--timeout TIMEOUT] [--quiet]
 
 options:
   -h, --help         show this help message and exit
-  --timeout TIMEOUT  Total command deadline in seconds, including
-                     browser/network waits (default: 300)
+  --timeout TIMEOUT  Overall command deadline in seconds; individual
+                     browser/network steps can time out sooner (default: 300)
   --quiet            Suppress progress on stderr; keep JSON stdout
 ```
 
@@ -1996,8 +1999,8 @@ usage: m365 tasks status [-h] [--timeout TIMEOUT] [--quiet]
 
 options:
   -h, --help         show this help message and exit
-  --timeout TIMEOUT  Total command deadline in seconds, including
-                     browser/network waits (default: 30)
+  --timeout TIMEOUT  Overall command deadline in seconds; individual
+                     browser/network steps can time out sooner (default: 30)
   --quiet            Suppress progress on stderr; keep JSON stdout
 ```
 
@@ -4223,8 +4226,8 @@ options:
   -h, --help         show this help message and exit
   --site SITE        SharePoint site root; required unless a stable handle or
                      URL supplies it
-  --timeout TIMEOUT  Total command deadline in seconds, including
-                     browser/network waits (default: 300)
+  --timeout TIMEOUT  Overall command deadline in seconds; individual
+                     browser/network steps can time out sooner (default: 300)
   --quiet            Suppress progress on stderr; keep JSON stdout
 ```
 
@@ -4237,8 +4240,8 @@ options:
   -h, --help         show this help message and exit
   --site SITE        SharePoint site root; required unless a stable handle or
                      URL supplies it
-  --timeout TIMEOUT  Total command deadline in seconds, including
-                     browser/network waits (default: 30)
+  --timeout TIMEOUT  Overall command deadline in seconds; individual
+                     browser/network steps can time out sooner (default: 30)
   --quiet            Suppress progress on stderr; keep JSON stdout
 ```
 
